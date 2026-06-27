@@ -9,9 +9,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/tweetnacl@1.0.3/nacl-fast.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-    
     <script src="https://cdn.jsdelivr.net/npm/qrious@4.0.2/dist/qrious.min.js"></script>
-
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -150,6 +148,36 @@
                 </div>
             </div>
 
+            <!-- 公告弹窗 -->
+            <div v-if="showWelcomePopup && probeSys.enable_popup === 'true'" class="fixed inset-0 z-[9999] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+                <div class="bg-white rounded-[2rem] p-8 shadow-2xl w-full max-w-lg relative text-center">
+                    <div class="text-left leading-relaxed text-[15px] max-h-[60vh] overflow-y-auto text-slate-700" v-html="probeSys.popup_content"></div>
+                    <button @click="closePopup" class="mt-6 bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg hover:scale-105 active:scale-95 transition-all">我已知晓</button>
+                </div>
+            </div>
+
+            <!-- 排行榜弹窗 -->
+            <div v-if="showRankModal" class="fixed inset-0 z-[200] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4" @click.self="showRankModal = false">
+                <div class="bg-white rounded-3xl p-8 shadow-2xl w-full max-w-4xl relative max-h-[90vh] overflow-y-auto theme-modal-content">
+                    <button @click="showRankModal = false" class="absolute top-4 right-5 text-2xl text-slate-400 hover:text-slate-600">&times;</button>
+                    <h3 class="text-xl font-black text-amber-500 mb-2">🏆 去中心化网络 (Gossip) 资产与探针排行</h3>
+                    <p class="text-xs text-slate-500 mb-6">* 数据由分布在各地的 Cloudflare Workers 节点通过弱共识自主计算得出。<br>当前全网共记录互联 VPS <b class="text-blue-500">{{ globalGossipServers }}</b> 台，汇总资产总额 <b class="text-emerald-500">{{ globalGossipAssets }} {{ probeSys.asset_currency || '元' }}</b>。</p>
+                    <table class="probe-custom-table w-full">
+                        <thead><tr><th>排名</th><th>网络节点 (Domain)</th><th>VPS 数量</th><th>探针总资产</th><th>最后活跃</th></tr></thead>
+                        <tbody>
+                            <tr v-if="rankList.length === 0"><td colspan="5" class="text-center">尚未拉取到其他节点数据，系统正在后台握手互联中...</td></tr>
+                            <tr v-for="(item, index) in rankList" :key="item.domain">
+                                <td :class="{'font-bold text-emerald-500': item.domain === currentDomainHost}">{{ index + 1 }}</td>
+                                <td :class="{'font-bold text-emerald-500': item.domain === currentDomainHost}">{{ item.domain === currentDomainHost ? '👑 ' + item.domain + ' (本机)' : item.domain }}</td>
+                                <td :class="{'font-bold text-emerald-500': item.domain === currentDomainHost}">{{ item.servers }} 台</td>
+                                <td :class="{'font-bold text-emerald-500': item.domain === currentDomainHost}">{{ parseFloat(item.assets).toFixed(2) }} {{ probeSys.asset_currency || '元' }}</td>
+                                <td :class="{'font-bold text-emerald-500': item.domain === currentDomainHost}">{{ getActiveTime(item.last_seen, item.domain) }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <div class="probe-container">
                 <div class="flex justify-between items-center mb-8 flex-wrap gap-4 header">
                     <h1 class="text-2xl font-black m-0 flex items-center gap-3">
@@ -159,6 +187,7 @@
                     
                     <div class="flex items-center gap-4 flex-wrap" v-if="!probeDetailId">
                         <div class="probe-view-controls view-controls">
+                            <button class="probe-toggle-btn toggle-btn" @click="showRankModal = true">🏆 Gossip 排行</button>
                             <button class="probe-toggle-btn toggle-btn" :class="{active: probeView === 'card'}" @click="setProbeView('card')">卡片</button>
                             <button class="probe-toggle-btn toggle-btn" :class="{active: probeView === 'table'}" @click="setProbeView('table')">表格</button>
                             <button class="probe-toggle-btn toggle-btn" :class="{active: probeView === 'map'}" @click="setProbeView('map')">地图</button>
@@ -183,7 +212,7 @@
                             <div class="flex flex-col"><span class="probe-info-label info-label">虚拟化</span><span class="font-medium info-value">{{ probeDetail.virt || 'N/A' }}</span></div>
                             <div class="flex flex-col"><span class="probe-info-label info-label">CPU</span><span class="font-medium truncate info-value" :title="probeDetail.cpu_info">{{ probeDetail.cpu_info || 'N/A' }}</span></div>
                             <div class="flex flex-col"><span class="probe-info-label info-label">Load</span><span class="font-medium info-value">{{ probeDetail.load_avg || '0.00' }}</span></div>
-                            <div class="flex flex-col"><span class="probe-info-label info-label">上传 / 下载</span><span class="font-medium info-value">{{ formatBytes(probeDetail[probeSys.auto_reset_traffic === 'true' ? 'monthly_tx' : 'net_tx']) }} / {{ formatBytes(probeDetail[probeSys.auto_reset_traffic === 'true' ? 'monthly_rx' : 'net_rx']) }}</span></div>
+                            <div class="flex flex-col"><span class="probe-info-label info-label">上传 / 下载</span><span class="font-medium info-value">{{ formatBytes(probeDetail.net_tx) }} / {{ formatBytes(probeDetail.net_rx) }}</span></div>
                             <div class="flex flex-col"><span class="probe-info-label info-label">启动时间</span><span class="font-medium info-value">{{ probeDetail.boot_time || 'N/A' }}</span></div>
                         </div>
                     </div>
@@ -208,31 +237,34 @@
 
                 <div v-else>
                     <div class="probe-filter-bar filter-bar">
-                        <span class="probe-filter-tag filter-tag active">全部 {{ publicProbeServers.length }}</span>
-                        <span v-for="(count, code) in probeCountryStats" :key="code" class="probe-filter-tag filter-tag">
-                            <img :src="'https://flagcdn.com/16x12/' + code.toLowerCase() + '.png'"> {{ code }} {{ count }}
+                        <span class="probe-filter-tag filter-tag" :class="{active: currentFilter === 'all'}" @click="currentFilter = 'all'">全部 {{ publicProbeServers.length }}</span>
+                        <span v-for="(count, code) in probeCountryStats" :key="code" class="probe-filter-tag filter-tag" :class="{active: currentFilter === code}" @click="currentFilter = code">
+                            <img :src="'https://flagcdn.com/16x12/' + (code === 'TW' ? 'cn' : code.toLowerCase()) + '.png'"> {{ code }} {{ count }}
                         </span>
                     </div>
 
                     <div class="probe-global-stats global-stats">
-                        <div class="probe-g-item g-item"><div class="probe-g-label g-label">服务器总数</div><div class="probe-g-val g-val">{{ publicProbeServers.length }}</div><div class="probe-g-sub g-sub">在线 <span class="text-emerald-500">{{ probeGlobalOnline }}</span> | 离线 <span class="text-red-500">{{ probeGlobalOffline }}</span></div></div>
-                        <div class="probe-g-item g-item"><div class="probe-g-label g-label">总计流量 (入 | 出) <span v-if="probeSys.auto_reset_traffic==='true'" class="text-[10px] text-orange-600">(本月)</span></div><div class="probe-g-val g-val">{{ formatBytes(probeGlobalNetRx) }} | {{ formatBytes(probeGlobalNetTx) }}</div></div>
+                        <div class="probe-g-item g-item"><div class="probe-g-label g-label">服务器总数</div><div class="probe-g-val g-val">{{ publicProbeServers.length }} <span v-if="myServerRank !== '-'" class="text-[11px] text-amber-500 font-bold ml-1">🏆 排第 {{ myServerRank }} 名</span></div><div class="probe-g-sub g-sub">在线 <span class="text-emerald-500">{{ probeGlobalOnline }}</span> | 离线 <span class="text-red-500">{{ probeGlobalOffline }}</span></div></div>
+                        <div class="probe-g-item g-item border-l border-r border-slate-200"><div class="probe-g-label g-label">🌐 全网节点汇总 (Gossip)</div><div class="probe-g-val g-val">{{ globalGossipServers }} 台</div><div class="probe-g-sub g-sub">全网总资产: <span class="text-emerald-600 font-bold">{{ globalGossipAssets }}</span> {{ probeSys.asset_currency || '元' }}</div></div>
+                        <div class="probe-g-item g-item"><div class="probe-g-label g-label">本机可见数字资产</div><div class="probe-g-val g-val">{{ probeGlobalAssets.total.toFixed(2) }} <span class="text-[12px] text-slate-400">总</span> | {{ probeGlobalAssets.rem.toFixed(2) }} <span class="text-[12px] text-slate-400">余</span></div><div class="probe-g-sub g-sub" v-if="myAssetRank !== '-'">🏆 资产排行: 第 {{ myAssetRank }} 名</div></div>
+                        <div class="w-full h-px bg-slate-100 my-2"></div>
+                        <div class="probe-g-item g-item"><div class="probe-g-label g-label">总计流量 (入 | 出) <span v-if="probeSys.auto_reset_traffic==='true'" class="text-[10px] text-orange-600">(按期重置)</span></div><div class="probe-g-val g-val">{{ formatBytes(probeGlobalNetRx) }} | {{ formatBytes(probeGlobalNetTx) }}</div></div>
                         <div class="probe-g-item g-item"><div class="probe-g-label g-label">实时网速 (入 | 出)</div><div class="probe-g-val g-val"><span class="text-emerald-500">↓</span> {{ formatBytes(probeGlobalSpeedIn) }}/s | <span class="text-blue-500">↑</span> {{ formatBytes(probeGlobalSpeedOut) }}/s</div></div>
                     </div>
 
                     <div v-if="probeView === 'card'">
-                        <template v-if="Object.keys(probeGroups).length === 0"><p class="text-center text-gray-500 w-full mt-10">暂无公开服务器</p></template>
-                        <template v-for="(servers, groupName) in probeGroups" :key="groupName">
+                        <template v-if="Object.keys(filteredProbeGroups).length === 0"><p class="text-center text-gray-500 w-full mt-10">暂无匹配的服务器</p></template>
+                        <template v-for="(servers, groupName) in filteredProbeGroups" :key="groupName">
                             <div class="probe-group-header group-header">{{ groupName }}</div>
                             <div class="probe-grid-container grid-container">
                                 <div v-for="s in servers" :key="s.id" @click="openProbeDetail(s.id)" class="probe-vps-card vps-card">
                                     <div class="probe-card-left card-left">
                                         <div class="probe-card-title card-title">
                                             <div class="probe-status-dot status-dot" :style="{background: isOnline(s.last_updated) ? '#10b981' : '#ef4444'}"></div>
-                                            <img v-if="s.country && s.country !== 'XX'" :src="'https://flagcdn.com/24x18/' + s.country.toLowerCase() + '.png'" class="mr-1.5 rounded-sm">
+                                            <img v-if="s.country && s.country !== 'XX'" :src="'https://flagcdn.com/24x18/' + (s.country === 'TW' ? 'cn' : s.country.toLowerCase()) + '.png'" class="mr-1.5 rounded-sm">
                                             <span class="text-[15px] truncate card-title-text">{{ s.name }}</span>
                                         </div>
-                                        <div v-if="probeSys.show_price === 'true'" class="probe-card-meta card-meta mt-2">价格: {{ s.price || '免费' }}</div>
+                                        <div v-if="probeSys.show_price === 'true'" class="probe-card-meta card-meta mt-2">价格: {{ s.price || '免费' }} <span v-if="s._amount > 0" class="text-purple-600 font-bold ml-1" title="剩余价值">余: {{ s._remValue.toFixed(2) }}{{ probeSys.asset_currency || '元' }}</span></div>
                                         <div v-if="probeSys.show_expire === 'true'" class="probe-card-meta card-meta" :class="probeSys.show_price!=='true'?'mt-2':''">剩余天数: {{ getExpireText(s.expire_date) }}</div>
                                         <div class="probe-card-meta card-meta" :class="probeSys.show_price!=='true'&&probeSys.show_expire!=='true'?'mt-2':''">流量: <span class="text-emerald-500">↓</span> {{ formatBytes(s[probeSys.auto_reset_traffic === 'true' ? 'monthly_rx' : 'net_rx']) }} | <span class="text-blue-500">↑</span> {{ formatBytes(s[probeSys.auto_reset_traffic === 'true' ? 'monthly_tx' : 'net_tx']) }}</div>
                                         <div class="probe-card-meta card-meta mt-0.5">在线: {{ (s.uptime||'-').replace('days','天').replace('day','天') }} | 更新: {{ Math.round((Date.now() - s.last_updated)/1000) }}s前</div>
@@ -284,11 +316,11 @@
                         <table class="probe-custom-table custom-table">
                             <thead><tr><th>状态</th><th>节点名称</th><th>地区</th><th>系统/架构/虚拟化</th><th>CPU</th><th>内存</th><th>磁盘</th><th>流量(入|出)</th><th>下行</th><th>上行</th><th>更新</th></tr></thead>
                             <tbody>
-                                <tr v-if="publicProbeServers.length===0"><td colspan="11" class="text-center">暂无数据</td></tr>
-                                <tr v-for="s in publicProbeServers" :key="s.id" @click="openProbeDetail(s.id)">
+                                <tr v-if="filteredProbeServers.length===0"><td colspan="11" class="text-center">暂无数据</td></tr>
+                                <tr v-for="s in filteredProbeServers" :key="s.id" @click="openProbeDetail(s.id)">
                                     <td class="text-center"><div class="probe-status-dot status-dot inline-block m-0" :style="{background: isOnline(s.last_updated) ? '#10b981' : '#ef4444'}"></div></td>
                                     <td><b class="card-title-text">{{ s.name }}</b></td>
-                                    <td><img v-if="s.country && s.country!=='XX'" :src="'https://flagcdn.com/24x18/' + s.country.toLowerCase() + '.png'"></td>
+                                    <td><img v-if="s.country && s.country!=='XX'" :src="'https://flagcdn.com/24x18/' + (s.country === 'TW' ? 'cn' : s.country.toLowerCase()) + '.png'"></td>
                                     <td><span class="text-xs text-gray-500 os-text">{{ s.os||'-' }} / {{ s.arch||'-' }} / {{ s.virt||'-' }}</span></td>
                                     <td class="min-w-[100px]"><div class="flex items-center gap-2"><div class="w-[50px] h-1 bg-gray-200 rounded-sm overflow-hidden probe-stat-bar stat-bar"><div class="h-full bg-blue-500" :style="{width: s.cpu+'%'}"></div></div><span class="stat-val">{{ parseFloat(s.cpu||0).toFixed(1) }}%</span></div></td>
                                     <td class="min-w-[100px]"><div class="flex items-center gap-2"><div class="w-[50px] h-1 bg-gray-200 rounded-sm overflow-hidden probe-stat-bar stat-bar"><div class="h-full bg-emerald-500" :style="{width: s.ram+'%'}"></div></div><span class="stat-val">{{ parseFloat(s.ram||0).toFixed(1) }}%</span></div></td>
@@ -512,7 +544,7 @@
                     </div>
 
                     <div class="bg-white/60 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white shadow-xl shadow-slate-200/40">
-                        <h3 class="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">📊 探针大盘外观与偏好设置</h3>
+                        <h3 class="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">📊 探针大盘与 Gossip 高级设置</h3>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
                             <div class="space-y-4">
                                 <div><label class="block text-xs font-bold text-slate-500 mb-1">大盘展示标题</label><input v-model="probeSys.site_title" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
@@ -527,23 +559,34 @@
                                 <div><label class="block text-xs font-bold text-slate-500 mb-1">自定义 &lt;head&gt; 注入</label><textarea v-model="probeSys.custom_head" rows="2" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-mono"></textarea></div>
                                 <div><label class="block text-xs font-bold text-slate-500 mb-1">自定义底部 Script 注入</label><textarea v-model="probeSys.custom_script" rows="2" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-mono"></textarea></div>
                                 <div><label class="block text-xs font-bold text-slate-500 mb-1">探针客户端上报间隔 (秒)</label><input type="number" v-model="probeSys.report_interval" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                                
+                                <label class="block text-sm font-bold text-amber-600 mt-6 mb-2">🌐 Gossip 协议与资产配置</label>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">前台资产货币单位 (如：元 / USD)</label><input v-model="probeSys.asset_currency" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">Gossip 初始化种子节点 (逗号分隔)</label><input v-model="probeSys.seed_nodes" placeholder="例如: tanzhen.kejikkk.com" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
                             </div>
                             <div class="space-y-4">
                                 <label class="block text-sm font-bold text-slate-700 mb-2">👁️ 前台展示控制</label>
-                                <label class="flex items-center gap-2 text-sm bg-yellow-50 p-2 border border-yellow-200 rounded-lg cursor-pointer"><input type="checkbox" v-model="probeSys.auto_reset_traffic" true-value="true" false-value="false" class="w-4 h-4"> 启用每月1号重置探针流量统计</label>
+                                <label class="flex items-center gap-2 text-sm bg-yellow-50 p-2 border border-yellow-200 rounded-lg cursor-pointer"><input type="checkbox" v-model="probeSys.auto_reset_traffic" true-value="true" false-value="false" class="w-4 h-4"> <span class="flex-1">启用流量按期重置 (全局总控开关)<br><span class="text-[10px] text-slate-500">开启后各节点根据独立【重置日】自动清零流量。关闭则显示累计总流量。</span></span></label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.is_public" true-value="true" false-value="false" class="w-4 h-4"> 开启公开访问 (取消勾选必须登录)</label>
-                                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.show_price" true-value="true" false-value="false" class="w-4 h-4"> 显示机器价格</label>
+                                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.show_price" true-value="true" false-value="false" class="w-4 h-4"> 显示价格与剩余价值</label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.show_expire" true-value="true" false-value="false" class="w-4 h-4"> 显示机器到期时间</label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.show_bw" true-value="true" false-value="false" class="w-4 h-4"> 显示带宽徽章</label>
                                 <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.show_tf" true-value="true" false-value="false" class="w-4 h-4"> 显示流量配额徽章</label>
-                                
-                                <label class="block text-sm font-bold text-rose-500 mt-6 mb-2">✈️ Telegram 离线告警设置</label>
+                                <label class="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" v-model="probeSys.enable_popup" true-value="true" false-value="false" class="w-4 h-4"> 开启首页访问公告弹窗 (支持HTML)</label>
+                                <div v-if="probeSys.enable_popup === 'true'"><textarea v-model="probeSys.popup_content" rows="4" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm" placeholder="<h3>公告</h3><p>内容...</p>"></textarea></div>
+
+                                <label class="block text-sm font-bold text-blue-600 mt-6 mb-2">📡 动态下发三网测速节点配置</label>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">电信 (CT)</label><input v-model="probeSys.ping_node_ct" placeholder="默认: default" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm"></div>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">联通 (CU)</label><input v-model="probeSys.ping_node_cu" placeholder="默认: default" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm"></div>
+                                <div><label class="block text-xs font-bold text-slate-500 mb-1">移动 (CM)</label><input v-model="probeSys.ping_node_cm" placeholder="默认: default" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm"></div>
+
+                                <label class="block text-sm font-bold text-rose-500 mt-6 mb-2">✈️ Telegram 管理与告警设置</label>
                                 <div>
                                     <select v-model="probeSys.tg_notify" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700 mb-2">
-                                        <option value="false">关闭告警</option><option value="true">开启告警 (掉线超过2分钟自动推送)</option>
+                                        <option value="false">关闭告警 (仅使用机器人控制面板)</option><option value="true">开启告警 (掉线自动推送)</option>
                                     </select>
-                                    <input v-if="probeSys.tg_notify === 'true'" v-model="probeSys.tg_bot_token" placeholder="Bot Token" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm mb-2">
-                                    <input v-if="probeSys.tg_notify === 'true'" v-model="probeSys.tg_chat_id" placeholder="Chat ID" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm">
+                                    <input v-model="probeSys.tg_bot_token" placeholder="Bot Token (必须填写以启用机器人命令)" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm mb-2">
+                                    <input v-model="probeSys.tg_chat_id" placeholder="Chat ID (管理员ID)" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm">
                                 </div>
                             </div>
                         </div>
@@ -597,13 +640,24 @@
                 <button @click="probeEditModalOpen = false" class="absolute top-4 right-5 text-2xl text-slate-400 hover:text-slate-600">&times;</button>
                 <h3 class="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">✏️ 编辑探针展示信息</h3>
                 <div class="space-y-4">
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">展示别名</label><input v-model="editingProbeNode.name" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">前台可见性</label><select v-model="editingProbeNode.is_hidden" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"><option value="false">显示 (默认)</option><option value="true">隐藏 (不在前台大盘展示)</option></select></div>
+                    <div class="flex gap-4">
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">展示别名</label><input v-model="editingProbeNode.name" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">前台可见性</label><select v-model="editingProbeNode.is_hidden" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"><option value="false">显示 (默认)</option><option value="true">隐藏</option></select></div>
+                    </div>
                     <div><label class="block text-xs font-bold text-slate-500 mb-1">分组名称</label><input v-model="editingProbeNode.server_group" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">价格</label><input v-model="editingProbeNode.price" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">到期时间</label><input type="date" v-model="editingProbeNode.expire_date" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">带宽 (徽章)</label><input v-model="editingProbeNode.bandwidth" placeholder="如: 1Gbps" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                    <div><label class="block text-xs font-bold text-slate-500 mb-1">流量总量 (徽章)</label><input v-model="editingProbeNode.traffic_limit" placeholder="如: 1TB/月" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                    <div class="flex gap-4">
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">价格 (自动换算汇率)</label><input v-model="editingProbeNode.price" placeholder="如: 10USD/年" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">到期时间</label><input type="date" v-model="editingProbeNode.expire_date" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">带宽 (徽章)</label><input v-model="editingProbeNode.bandwidth" placeholder="如: 1Gbps" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                        <div class="flex-1"><label class="block text-xs font-bold text-slate-500 mb-1">流量总量 (徽章)</label><input v-model="editingProbeNode.traffic_limit" placeholder="如: 1TB/月" class="w-full border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                    </div>
+                    <div class="bg-amber-50 p-4 border border-amber-100 rounded-xl mt-2">
+                        <label class="block text-xs font-bold text-amber-700 mb-1">每月流量重置日 (1-31)</label>
+                        <p class="text-[10px] text-amber-600 mb-2">需在【系统设置】开启“启用流量按期重置”。到达此日时该机器记录流量自动清零。</p>
+                        <input type="number" min="1" max="31" v-model="editingProbeNode.reset_day" class="w-full border border-amber-200 p-2.5 rounded-xl text-sm font-medium text-amber-900 bg-white">
+                    </div>
                 </div>
                 <div class="mt-8 flex justify-end gap-3">
                     <button @click="probeEditModalOpen = false" class="px-5 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition">取消</button>
@@ -644,6 +698,7 @@
                 const currentUser = ref(localStorage.getItem('kui_user') || ''); const authKey = ref(localStorage.getItem('kui_auth_key') || ''); const role = ref(localStorage.getItem('kui_role') || '');
                 const activeTab = ref(localStorage.getItem('monitor_preferred_tab') || 'probe'); 
                 const currentDomain = window.location.origin;
+                const currentDomainHost = window.location.hostname;
 
                 const servers = ref([]); const nodes = ref([]); const users = ref([]);
                 const newVps = ref({ name: '', ip: '', os: 'debian' }); const newNodeParams = reactive({}); const newUser = reactive({ username: '', password: '', traffic_limit_gb: '', expire_date: '' });
@@ -653,18 +708,30 @@
                 let initOsMap = {}; try { initOsMap = JSON.parse(localStorage.getItem('kui_deploy_os') || '{}'); } catch(e) {}
                 const deployOsMap = reactive(initOsMap);
 
-                const probeSys = reactive({ theme: 'theme1', is_public: 'true', site_title: 'Server Monitor Pro', custom_bg: '', custom_css: '', custom_head: '', custom_script: '', report_interval: '5', visits_total: '0', visits_today: '0' });
+                // 全新增强版探针设置默认值
+                const probeSys = reactive({ theme: 'theme1', is_public: 'true', site_title: 'Server Monitor Pro', custom_bg: '', custom_css: '', custom_head: '', custom_script: '', report_interval: '5', visits_total: '0', visits_today: '0', asset_currency: '元', seed_nodes: '', ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default', enable_popup: 'false', popup_content: '', tg_notify: 'false', tg_bot_token: '', tg_chat_id: '' });
                 const publicProbeServers = ref([]);
                 const probeView = ref(localStorage.getItem('monitor_preferred_view') || 'card');
                 const probeDetailId = ref(null); const probeDetail = ref({});
                 let probeCharts = {};
+                const currentFilter = ref('all');
 
                 const adminProbeServers = ref([]);
                 const probeEditModalOpen = ref(false); const editingProbeNode = ref({});
                 
-                // 二维码状态
                 const qrModalOpen = ref(false);
                 const qrCodeImage = ref('');
+
+                // Gossip 排行榜状态
+                const showRankModal = ref(false);
+                const rankList = ref([]);
+                const globalGossipServers = ref(0);
+                const globalGossipAssets = ref('0.00');
+                const myServerRank = ref('-');
+                const myAssetRank = ref('-');
+                
+                // 公告弹窗
+                const showWelcomePopup = ref(false);
 
                 watch(activeTab, (val) => localStorage.setItem('monitor_preferred_tab', val));
                 watch(probeView, (val) => localStorage.setItem('monitor_preferred_view', val));
@@ -690,19 +757,13 @@
                     let wrapper = document.getElementById('kui-custom-html-wrapper');
                     if (wrapper) wrapper.remove();
                     if (!newVal) return;
-                    
-                    wrapper = document.createElement('div');
-                    wrapper.id = 'kui-custom-html-wrapper';
-                    wrapper.innerHTML = newVal; 
-                    
+                    wrapper = document.createElement('div'); wrapper.id = 'kui-custom-html-wrapper'; wrapper.innerHTML = newVal; 
                     const scripts = wrapper.getElementsByTagName('script');
                     for (let i = 0; i < scripts.length; i++) {
                         const newScript = document.createElement('script');
-                        if (scripts[i].src) newScript.src = scripts[i].src;
-                        else newScript.textContent = scripts[i].textContent;
+                        if (scripts[i].src) newScript.src = scripts[i].src; else newScript.textContent = scripts[i].textContent;
                         document.body.appendChild(newScript);
                     }
-                    
                     document.body.appendChild(wrapper);
                 };
 
@@ -723,6 +784,15 @@
                 const globalSpeedIn = computed(() => servers.value.reduce((sum, s) => sum + (parseFloat(s.net_in_speed) || 0), 0));
                 const globalSpeedOut = computed(() => servers.value.reduce((sum, s) => sum + (parseFloat(s.net_out_speed) || 0), 0));
 
+                const filteredProbeServers = computed(() => {
+                    if (currentFilter.value === 'all') return publicProbeServers.value;
+                    return publicProbeServers.value.filter(s => {
+                        let c = (s.country || 'xx').toUpperCase();
+                        if (c === 'TW') c = 'CN';
+                        return c === currentFilter.value;
+                    });
+                });
+
                 const probeGlobalOnline = computed(() => publicProbeServers.value.filter(s => isOnline(s.last_updated)).length);
                 const probeGlobalOffline = computed(() => publicProbeServers.value.length - probeGlobalOnline.value);
                 const probeGlobalSpeedIn = computed(() => publicProbeServers.value.reduce((sum, s) => sum + (parseFloat(s.net_in_speed)||0), 0));
@@ -730,7 +800,52 @@
                 const probeGlobalNetRx = computed(() => publicProbeServers.value.reduce((sum, s) => sum + (parseFloat(s[probeSys.auto_reset_traffic === 'true' ? 'monthly_rx' : 'net_rx'])||0), 0));
                 const probeGlobalNetTx = computed(() => publicProbeServers.value.reduce((sum, s) => sum + (parseFloat(s[probeSys.auto_reset_traffic === 'true' ? 'monthly_tx' : 'net_tx'])||0), 0));
                 const probeGroups = computed(() => { const groups = {}; publicProbeServers.value.forEach(s => { const g = s.server_group || '默认分组'; if(!groups[g]) groups[g] = []; groups[g].push(s); }); return groups; });
+                const filteredProbeGroups = computed(() => { 
+                    const groups = {}; 
+                    filteredProbeServers.value.forEach(s => { const g = s.server_group || '默认分组'; if(!groups[g]) groups[g] = []; groups[g].push(s); }); 
+                    return groups; 
+                });
+
                 const probeCountryStats = computed(() => { const stats = {}; publicProbeServers.value.forEach(s => { let code = (s.country || 'xx').toUpperCase(); if(code === 'TW') code = 'CN'; if(code !== 'XX') stats[code] = (stats[code] || 0) + 1; }); return stats; });
+
+                // 核心：本机探针可见资产动态汇率计算
+                const probeGlobalAssets = computed(() => {
+                    let visibleAsset = 0; let visibleRemAsset = 0;
+                    const now = Date.now();
+                    publicProbeServers.value.forEach(server => {
+                        let amount = 0; let remValue = 0;
+                        if (server.price && server.price.match(/[\d.]+/)) {
+                            let rawAmount = parseFloat(server.price.match(/[\d.]+/)[0]) || 0;
+                            let rate = 1; const pUpper = server.price.toUpperCase();
+                            if (pUpper.includes('USD') || pUpper.includes('$')) rate = 7.23;
+                            else if (pUpper.includes('EUR') || pUpper.includes('€')) rate = 7.85;
+                            else if (pUpper.includes('GBP') || pUpper.includes('£')) rate = 9.12;
+                            else if (pUpper.includes('HKD')) rate = 0.92;
+                            else if (pUpper.includes('JPY')) rate = 0.048;
+                            else if (pUpper.includes('TWD')) rate = 0.22;
+                            else if (pUpper.includes('RUB')) rate = 0.078;
+                            else if (pUpper.includes('CAD')) rate = 5.25;
+                            else if (pUpper.includes('AUD')) rate = 4.75;
+                            amount = rawAmount * rate;
+
+                            let cycleDays = 365; const priceStr = server.price.toLowerCase();
+                            if (priceStr.includes('月') || priceStr.includes('mo') || priceStr.includes('month')) cycleDays = 30;
+                            else if (priceStr.includes('季') || priceStr.includes('qu')) cycleDays = 90;
+                            else if (priceStr.includes('半年') || priceStr.includes('half')) cycleDays = 180;
+                            else if (priceStr.includes('天') || priceStr.includes('day')) cycleDays = 1;
+
+                            let expDays = -1;
+                            if (server.expire_date) {
+                                const expTime = new Date(server.expire_date).getTime();
+                                if (!isNaN(expTime)) { const diff = expTime - now; expDays = diff > 0 ? Math.ceil(diff / (1000 * 3600 * 24)) : 0; }
+                            }
+                            remValue = expDays === -1 ? amount : (amount / cycleDays) * expDays;
+                        }
+                        visibleAsset += amount; visibleRemAsset += remValue;
+                        server._remValue = remValue; server._amount = amount;
+                    });
+                    return { total: visibleAsset, rem: visibleRemAsset };
+                });
 
                 const fetchApi = async (url, options = {}) => {
                     const timestamp = Date.now().toString(); const signature = await generateHMAC(authKey.value, currentUser.value + timestamp);
@@ -772,6 +887,10 @@
                     if(geoJsonLayer) myMap.removeLayer(geoJsonLayer); if(markersLayer) markersLayer.clearLayers(); else markersLayer = L.layerGroup().addTo(myMap);
                     const isDark = probeSys.theme === 'theme2' || probeSys.theme === 'theme5';
                     const activeIso3 = {}; for (const code in probeCountryStats.value) { if (iso2To3[code]) activeIso3[iso2To3[code]] = true; }
+                    
+                    if (activeIso3['CHN'] || activeIso3['TWN'] || activeIso3['HKG'] || activeIso3['MAC']) {
+                        activeIso3['CHN'] = true; activeIso3['TWN'] = true; activeIso3['HKG'] = true; activeIso3['MAC'] = true;
+                    }
                     geoJsonLayer = L.geoJSON(worldGeoJson, { style: function(feature) { const isActive = activeIso3[feature.id]; return { fillColor: isActive ? '#10b981' : (isDark ? '#2a303c' : '#d5dce2'), weight: 1, opacity: 1, color: isDark ? '#1a202c' : '#ffffff', fillOpacity: 1 }; } }).addTo(myMap);
                     for (const [code, count] of Object.entries(probeCountryStats.value)) { if(countryCoords[code]) { const icon = L.divIcon({ className: 'probe-custom-map-badge', html: `<div>${count}</div>`, iconSize: [22,22] }); L.marker(countryCoords[code], {icon: icon}).addTo(markersLayer); } }
                 };
@@ -807,6 +926,31 @@
 
                 const openProbeDetail = async (id) => { probeDetailId.value = id; await nextTick(); initProbeDetailCharts(); fetchProbeData(true); };
 
+                // 核心 Gossip 排行榜数据抓取
+                const fetchRank = async () => {
+                    try {
+                        const res = await fetch('/api/probe/rank'); if (!res.ok) return;
+                        const data = await res.json();
+                        globalGossipServers.value = data.global_servers || 0;
+                        globalGossipAssets.value = parseFloat(data.global_assets || 0).toFixed(2);
+                        myServerRank.value = data.server_rank || '-';
+                        myAssetRank.value = data.asset_rank || '-';
+                        rankList.value = data.list || [];
+                    } catch(e){}
+                };
+                const getActiveTime = (ts, domain) => {
+                    if (domain === currentDomainHost) return '刚刚';
+                    if (!ts) return '刚刚';
+                    const diffMin = Math.floor((Date.now() - ts) / 60000);
+                    if (diffMin > 60) return Math.floor(diffMin/60) + '小时前';
+                    return diffMin > 0 ? diffMin + '分钟前' : '刚刚';
+                };
+
+                const closePopup = () => {
+                    localStorage.setItem('kui_popup_seen', Date.now().toString());
+                    showWelcomePopup.value = false;
+                };
+
                 let isFirstLoad = true;
                 let isFetchingProbe = false;
                 const fetchProbeData = async (isDetail = false) => {
@@ -828,6 +972,12 @@
                             if (probeSys.custom_script && !document.getElementById('kui-custom-html-wrapper')) updateCustomScript(probeSys.custom_script);
                             if (probeView.value === 'map') drawMarkers();
                             if (probeSys.is_public !== 'true' && !isLoggedIn.value) showLoginModal.value = true;
+                            
+                            // 弹窗逻辑
+                            if (probeSys.enable_popup === 'true') {
+                                const lastSeen = localStorage.getItem('kui_popup_seen');
+                                if (!lastSeen || Date.now() - parseInt(lastSeen) > 86400000) showWelcomePopup.value = true;
+                            }
                         }
                     } catch(e) {} finally { isFetchingProbe = false; }
                 };
@@ -906,49 +1056,38 @@
                 const updateUserPassword = async () => { if(!userNewPassword.value) return alert('请输入新密码'); await fetchApi('/api/user/password', { method: 'PUT', body: JSON.stringify({ password: userNewPassword.value }) }); alert('✅ 密码修改成功！请使用新密码重新登录。'); logout(); };
                 const resetMySubLink = async () => { if(confirm('🚨 危险操作！重置后系统将为您签发全新的 UUID 订阅令牌，原链接将【立即作废】！确定要继续重置吗？')) { await fetchApi('/api/user/sub_token', { method: 'PUT' }); alert('✅ 订阅令牌已刷新！'); refreshData(); } };
                 
-                // 【核心修改点】：增加 format 参数生成不同订阅类型链接
+                // Clash / 普通 订阅双轨链接生成
                 const generateSubLink = (ip='', format='') => { const tokenToUse = mySubToken.value || authKey.value; return `${currentDomain}/api/sub?user=${currentUser.value}&token=${tokenToUse}${ip?`&ip=${ip}`:''}${format?`&format=${format}`:''}`; };
                 
                 const copyCommand = (txt, msg) => navigator.clipboard.writeText(txt).then(() => alert(msg));
 
                 const showQrCode = (text) => {
                     try {
-                        const qr = new QRious({
-                            value: text,
-                            size: 300,
-                            level: 'L', 
-                            background: '#ffffff',
-                            foreground: '#1e293b'
-                        });
-                        qrCodeImage.value = qr.toDataURL();
-                        qrModalOpen.value = true;
-                    } catch (err) { 
-                        console.error(err);
-                        alert('生成二维码失败！请检查链接长度或浏览器控制台。'); 
-                    }
+                        const qr = new QRious({ value: text, size: 300, level: 'L', background: '#ffffff', foreground: '#1e293b' });
+                        qrCodeImage.value = qr.toDataURL(); qrModalOpen.value = true;
+                    } catch (err) { alert('生成二维码失败！请检查链接长度或浏览器控制台。'); }
                 };
 
-                const saveProbeSettings = async () => { await fetchApi('/api/probe/admin/settings', { method: 'POST', body: JSON.stringify({settings: probeSys}) }); alert('✅ 探针大盘配置已生效！'); refreshData(); fetchProbeData(); };
-                const openProbeEditModal = (s) => { editingProbeNode.value = JSON.parse(JSON.stringify(s)); if(!editingProbeNode.value.is_hidden) editingProbeNode.value.is_hidden = 'false'; probeEditModalOpen.value = true; };
+                const saveProbeSettings = async () => { await fetchApi('/api/probe/admin/settings', { method: 'POST', body: JSON.stringify({settings: probeSys}) }); alert('✅ 探针大盘配置已生效！如果配置了TG参数已自动绑定Webhook。'); refreshData(); fetchProbeData(); };
+                const openProbeEditModal = (s) => { editingProbeNode.value = JSON.parse(JSON.stringify(s)); if(!editingProbeNode.value.is_hidden) editingProbeNode.value.is_hidden = 'false'; if(!editingProbeNode.value.reset_day) editingProbeNode.value.reset_day = '1'; probeEditModalOpen.value = true; };
                 const saveProbeEdit = async () => { await fetchApi('/api/probe/admin/server', { method: 'PUT', body: JSON.stringify(editingProbeNode.value) }); probeEditModalOpen.value = false; refreshData(); fetchProbeData(); };
-                
-                const deleteProbeNode = async (id) => {
-                    if (!confirm("⚠️ 确定要彻底删除该探针记录吗？如果机器还在运行 Agent，之后会自动复活！请确保先在面板的「服务器与节点」中删除此机器。")) return;
-                    await fetchApi(`/api/probe/admin/server?id=${id}`, { method: 'DELETE' }); refreshData(); fetchProbeData();
-                };
+                const deleteProbeNode = async (id) => { if (!confirm("⚠️ 确定要彻底删除该探针记录吗？如果机器还在运行 Agent，之后会自动复活！请确保先在面板的「服务器与节点」中删除此机器。")) return; await fetchApi(`/api/probe/admin/server?id=${id}`, { method: 'DELETE' }); refreshData(); fetchProbeData(); };
 
-                let dataTimer = null; let pingTimer = null; let probeTimer = null;
+                let dataTimer = null; let pingTimer = null; let probeTimer = null; let rankTimer = null;
                 const startPolling = () => { 
                     if (!dataTimer) { refreshData(); dataTimer = setInterval(() => { if (isLoggedIn.value && !document.hidden && activeTab.value !== 'probe') refreshData(); }, 2500); }
                     if (!pingTimer) { sendUiPing(); pingTimer = setInterval(() => { if (isLoggedIn.value && !document.hidden) sendUiPing(); }, 10000); }
                 };
-                const startProbePolling = () => { if (!probeTimer) { fetchProbeData(); probeTimer = setInterval(() => { if (!document.hidden && (!isLoggedIn.value || activeTab.value === 'probe')) fetchProbeData(); }, 4000); } }
+                const startProbePolling = () => { 
+                    if (!probeTimer) { fetchProbeData(); probeTimer = setInterval(() => { if (!document.hidden && (!isLoggedIn.value || activeTab.value === 'probe')) fetchProbeData(); }, 4000); } 
+                    if (!rankTimer) { fetchRank(); rankTimer = setInterval(() => { if (!document.hidden && (!isLoggedIn.value || activeTab.value === 'probe')) fetchRank(); }, 12000); }
+                }
                 const stopPolling = () => { if (dataTimer) { clearInterval(dataTimer); dataTimer = null; } if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } };
 
                 onMounted(() => {
                     fetchProbeData(); startProbePolling();
                     if (authKey.value && currentUser.value) { isLoggedIn.value = true; startPolling(); } 
-                    document.addEventListener('visibilitychange', () => { if (document.hidden) { stopPolling(); clearInterval(probeTimer); probeTimer=null; } else { if (isLoggedIn.value) startPolling(); startProbePolling(); } }); 
+                    document.addEventListener('visibilitychange', () => { if (document.hidden) { stopPolling(); clearInterval(probeTimer); probeTimer=null; clearInterval(rankTimer); rankTimer=null; } else { if (isLoggedIn.value) startPolling(); startProbePolling(); } }); 
                 });
 
                 return { 
@@ -957,9 +1096,10 @@
                     login, logout, refreshData, addUser, toggleUser, deleteUser, resetUserTraffic, addVps, deleteVps, addNode, deleteNode, toggleNode, resetTraffic, 
                     getNodesByIp, getVpsName, formatBytes, formatDate, getExpireText, getTrafficPercent, getPingColor, isOnline, generateCmd, generateSubLink, copyCommand, 
                     globalOnline, globalTraffic, globalSpeedIn, globalSpeedOut, deployOsMap, saveOsMap, siteTitle, siteTitleInput, saveSiteTitle, userNewPassword, updateUserPassword, resetMySubLink, generateUUIDForNewUser, batchStartPort, batchUser, deployAllProtocols,
-                    probeSys, publicProbeServers, probeView, probeDetailId, probeDetail, setProbeView, openProbeDetail, probeGlobalOnline, probeGlobalOffline, probeGlobalSpeedIn, probeGlobalSpeedOut, probeGlobalNetRx, probeGlobalNetTx, probeGroups, probeCountryStats,
-                    saveProbeSettings, adminProbeServers, probeEditModalOpen, editingProbeNode, openProbeEditModal, saveProbeEdit, deleteProbeNode, currentDomain,
-                    qrModalOpen, qrCodeImage, showQrCode
+                    probeSys, publicProbeServers, filteredProbeServers, probeView, probeDetailId, probeDetail, setProbeView, openProbeDetail, probeGlobalOnline, probeGlobalOffline, probeGlobalSpeedIn, probeGlobalSpeedOut, probeGlobalNetRx, probeGlobalNetTx, probeGroups, filteredProbeGroups, probeCountryStats, probeGlobalAssets, currentFilter,
+                    saveProbeSettings, adminProbeServers, probeEditModalOpen, editingProbeNode, openProbeEditModal, saveProbeEdit, deleteProbeNode, currentDomain, currentDomainHost,
+                    qrModalOpen, qrCodeImage, showQrCode, showRankModal, rankList, globalGossipServers, globalGossipAssets, myServerRank, myAssetRank, getActiveTime,
+                    showWelcomePopup, closePopup
                 };
             }
         }).mount('#app');
