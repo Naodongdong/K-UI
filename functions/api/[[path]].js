@@ -310,7 +310,10 @@ async function parseThirdPartySubscription(content) {
     return { nodes, protocolCounts, debug };
 }
 
-async function ensureDbSchema(db) {
+let schemaReadyPromise = null;
+let lastReceiptCleanup = 0;
+
+async function initializeDbSchema(db) {
     const initQueries = [
         `CREATE TABLE IF NOT EXISTS servers (ip TEXT PRIMARY KEY, name TEXT NOT NULL, cpu INTEGER DEFAULT 0, mem REAL DEFAULT 0, last_report INTEGER DEFAULT 0, alert_sent INTEGER DEFAULT 0, disk INTEGER DEFAULT 0, load TEXT DEFAULT "", uptime TEXT DEFAULT "", net_in_speed INTEGER DEFAULT 0, net_out_speed INTEGER DEFAULT 0, tcp_conn INTEGER DEFAULT 0, udp_conn INTEGER DEFAULT 0)`,
         `CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT NOT NULL, traffic_limit INTEGER DEFAULT 0, traffic_used INTEGER DEFAULT 0, expire_time INTEGER DEFAULT 0, enable INTEGER DEFAULT 1, sub_token TEXT)`,
@@ -373,6 +376,16 @@ async function ensureDbSchema(db) {
         `CREATE TABLE IF NOT EXISTS third_party_nodes (id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, name TEXT, protocol TEXT NOT NULL, address TEXT NOT NULL, port INTEGER NOT NULL, uuid TEXT, password TEXT, sni TEXT, public_key TEXT, short_id TEXT, flow TEXT, network TEXT, host TEXT, path TEXT, extra TEXT, enable INTEGER DEFAULT 1, created_at INTEGER, FOREIGN KEY(subscription_id) REFERENCES third_party_subscriptions(id) ON DELETE CASCADE)`
     ];
     for (let query of tpsQueries) { try { await db.prepare(query).run(); } catch (e) {} }
+}
+
+async function ensureDbSchema(db) {
+    if (!schemaReadyPromise) {
+        schemaReadyPromise = initializeDbSchema(db).catch(error => {
+            schemaReadyPromise = null;
+            throw error;
+        });
+    }
+    return schemaReadyPromise;
 }
 
 async function verifyAuth(authHeader, db, env) {
@@ -655,7 +668,7 @@ async function proxyLocal(method, subPath, req, env) {
     }
 
     if (subPath === 'pool' && method === 'GET') {
-        const cutoff = Date.now() - 120000;
+        const cutoff = Date.now() - 360000;
         const { results } = await db.prepare('SELECT ip, details, last_seen FROM proxy_ctrl_servers WHERE last_seen >= ? ORDER BY last_seen DESC').bind(cutoff).all();
         return Response.json(results || []);
     }
@@ -682,16 +695,16 @@ async function proxyLocal(method, subPath, req, env) {
                 await db.prepare(`INSERT INTO proxy_ctrl_servers (ip, last_seen) VALUES (?1, ?2) ON CONFLICT(ip) DO UPDATE SET last_seen = excluded.last_seen`).bind(proxyIp, Date.now()).run();
             }
             if (data.logs) {
-                await db.prepare(`INSERT INTO server_logs (ip, logs, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(ip) DO UPDATE SET logs = excluded.logs, updated_at = excluded.updated_at`).bind(proxyIp, data.logs, Date.now()).run();
+                const existingLog = await db.prepare('SELECT logs FROM server_logs WHERE ip = ?').bind(proxyIp).first();
+                if (!existingLog || existingLog.logs !== data.logs) await db.prepare(`INSERT INTO server_logs (ip, logs, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(ip) DO UPDATE SET logs = excluded.logs, updated_at = excluded.updated_at`).bind(proxyIp, data.logs, Date.now()).run();
             }
             return new Response("OK", { status: 200 });
         } catch (e) { return new Response("Error", { status: 500 }); }
     }
 
     if (subPath === 'proxies' && method === 'GET') {
-        const cutoff = Date.now() - 120000;
-        await db.prepare('DELETE FROM proxy_ctrl_servers WHERE last_seen < ?').bind(cutoff).run();
-        const { results } = await db.prepare('SELECT ip, details FROM proxy_ctrl_servers').all();
+        const cutoff = Date.now() - 360000;
+        const { results } = await db.prepare('SELECT ip, details FROM proxy_ctrl_servers WHERE last_seen >= ?').bind(cutoff).all();
         const list = [];
         if (results) {
             for (const s of results) {
@@ -704,9 +717,8 @@ async function proxyLocal(method, subPath, req, env) {
     }
 
     if (subPath === 'nodes' && method === 'GET') {
-        const cutoff = Date.now() - 120000;
-        await db.prepare('DELETE FROM proxy_ctrl_servers WHERE last_seen < ?').bind(cutoff).run();
-        const { results } = await db.prepare(`SELECT s.ip, s.details, s.last_seen, l.logs FROM proxy_ctrl_servers s LEFT JOIN server_logs l ON s.ip = l.ip ORDER BY s.last_seen DESC`).all();
+        const cutoff = Date.now() - 360000;
+        const { results } = await db.prepare(`SELECT s.ip, s.details, s.last_seen, l.logs FROM proxy_ctrl_servers s LEFT JOIN server_logs l ON s.ip = l.ip WHERE s.last_seen >= ? ORDER BY s.last_seen DESC`).bind(cutoff).all();
         return new Response(JSON.stringify(results || []), { headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -751,7 +763,7 @@ async function proxyLocal(method, subPath, req, env) {
 
 async function checkOfflineServers(env) {
     const db = env.DB; const nowMs = Date.now();
-    const { results } = await db.prepare(`SELECT ip, name, last_report FROM servers WHERE last_report < ? AND alert_sent = 0`).bind(nowMs - 180000).all();
+    const { results } = await db.prepare(`SELECT ip, name, last_report FROM servers WHERE last_report < ? AND alert_sent = 0`).bind(nowMs - 360000).all();
     if (!results || !results.length) return 0;
     let tgBotToken = env.TG_BOT_TOKEN; let tgChatId = env.TG_CHAT_ID;
     try { const { results: settings } = await db.prepare("SELECT key, value FROM probe_settings WHERE key IN ('tg_bot_token', 'tg_chat_id')").all(); settings.forEach(r => { if(r.key === 'tg_bot_token') tgBotToken = r.value; if(r.key === 'tg_chat_id') tgChatId = r.value; }); } catch(e){}
@@ -788,7 +800,9 @@ export async function onRequest(context) {
 
     if (action === "ui_ping" && method === "POST") {
         if (!(await verifyAuth(request.headers.get("Authorization"), db, env))) return new Response("Unauthorized", { status: 401 });
-        await db.prepare("INSERT OR REPLACE INTO sys_config (key, val, ts) VALUES ('ui_active', '1', ?)").bind(Date.now()).run();
+        const now = Date.now();
+        const current = await db.prepare("SELECT ts FROM sys_config WHERE key = 'ui_active'").first();
+        if (!current || now - current.ts > 45000) await db.prepare("INSERT OR REPLACE INTO sys_config (key, val, ts) VALUES ('ui_active', '1', ?)").bind(now).run();
         return Response.json({ success: true });
     }
 
@@ -937,9 +951,12 @@ export async function onRequest(context) {
         if (stmts.length > 0) {
             await db.batch(stmts);
         }
-        context.waitUntil(db.prepare("DELETE FROM report_receipts WHERE created_at < ?").bind(nowMs - 604800000).run().catch(() => {}));
+        if (nowMs - lastReceiptCleanup > 3600000) {
+            lastReceiptCleanup = nowMs;
+            context.waitUntil(db.prepare("DELETE FROM report_receipts WHERE created_at < ?").bind(nowMs - 604800000).run().catch(() => {}));
+        }
         
-        let fastMode = false; try { const uiActive = await db.prepare("SELECT ts FROM sys_config WHERE key = 'ui_active'").first(); if (uiActive && (nowMs - uiActive.ts < 20000)) fastMode = true; } catch(e) {}
+        let fastMode = false; try { const uiActive = await db.prepare("SELECT ts FROM sys_config WHERE key = 'ui_active'").first(); if (uiActive && (nowMs - uiActive.ts < 90000)) fastMode = true; } catch(e) {}
         
         let reportInterval = 5; let pingCt = 'default'; let pingCu = 'default'; let pingCm = 'default';
         try { 
@@ -954,7 +971,8 @@ export async function onRequest(context) {
             }
         } catch(e) {}
         
-        return Response.json({ success: true, fast_mode: fastMode, interval: reportInterval, ping_ct: pingCt, ping_cu: pingCu, ping_cm: pingCm });
+        const effectiveInterval = Math.min(300, fastMode ? Math.max(15, reportInterval) : Math.max(90, reportInterval));
+        return Response.json({ success: true, fast_mode: fastMode, interval: effectiveInterval, ping_ct: pingCt, ping_cu: pingCu, ping_cm: pingCm });
      } catch (err) {
         return Response.json({ error: "REPORT_ERR: " + (err && err.message ? err.message : String(err)) }, { status: 500 });
      }
@@ -1194,7 +1212,7 @@ export async function onRequest(context) {
             const proxyUser = env.PROXY_USER || '';
             const proxyPass = env.PROXY_PASS || '';
             if (!proxyUser || !proxyPass) throw new Error('PROXY_USER and PROXY_PASS must be configured');
-            const cutoff = Date.now() - 120000;
+            const cutoff = Date.now() - 360000;
             const { results: proxyServers } = await db.prepare('SELECT ip, details FROM proxy_ctrl_servers WHERE last_seen > ?').bind(cutoff).all();
             if (proxyServers) {
                 for (const s of proxyServers) {

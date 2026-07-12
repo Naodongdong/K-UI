@@ -121,6 +121,8 @@ def check_for_update():
 
 # 🌟 动态心跳间隔，默认 5 秒
 global_interval = 5
+fast_mode = False
+config_wakeup = threading.Event()
 
 # 🌟 增加全局 Ping 状态缓存锁，防止在非测速轮次上传 '0' 导致前端图表归零
 last_pings = {"ct": "0", "cu": "0", "cm": "0", "bd": "0"}
@@ -716,7 +718,7 @@ def build_singbox_config(nodes, proxy_cfg=None, peers=None, mesh=None, socks5_ou
         subprocess.run(["systemctl", "start", "sing-box"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
 
 def report_status(current_nodes, argo_urls):
-    global last_reported_bytes, global_interval, dynamic_ping, pending_report_id, pending_report_bytes, pending_node_traffic
+    global last_reported_bytes, global_interval, fast_mode, dynamic_ping, pending_report_id, pending_report_bytes, pending_node_traffic
     status = get_system_status(global_interval)
     status["ip"] = VPS_IP
     status["argo_urls"] = argo_urls
@@ -751,6 +753,10 @@ def report_status(current_nodes, argo_urls):
         pending_node_traffic = None
         if resp_data and "interval" in resp_data:
             global_interval = min(max(1, int(resp_data["interval"])), 3600)
+        new_fast_mode = bool(resp_data.get("fast_mode"))
+        if new_fast_mode and not fast_mode:
+            config_wakeup.set()
+        fast_mode = new_fast_mode
         for key in ("ct", "cu", "cm"):
             value = resp_data.get(f"ping_{key}")
             dynamic_ping[key] = None if not value or value == "default" else value
@@ -883,7 +889,7 @@ if __name__ == "__main__":
             except Exception as error:
                 print(f"[agent] heartbeat loop error: {error}", flush=True)
             elapsed = time.monotonic() - started
-            heartbeat_interval = min(max(2, global_interval), 10)
+            heartbeat_interval = min(max(15, global_interval), 90)
             time.sleep(max(1, heartbeat_interval - min(heartbeat_interval - 1, elapsed)))
 
     time.sleep(2)
@@ -895,10 +901,11 @@ if __name__ == "__main__":
             fetched_nodes = fetch_and_apply_configs()
             if fetched_nodes is not None: heartbeat_state["nodes"] = fetched_nodes
             heartbeat_state["argo_urls"] = process_argo_nodes(heartbeat_state["nodes"])
-            report_proxy_status()
         except Exception as error:
             print(f"[agent] main loop error: {error}", flush=True)
         elapsed = time.monotonic() - loop_started
         if elapsed > 20:
             print(f"[agent] slow loop completed in {elapsed:.1f}s", flush=True)
-        time.sleep(max(1, global_interval - min(global_interval - 1, elapsed)))
+        config_interval = 30 if fast_mode else 300
+        config_wakeup.wait(timeout=max(1, config_interval - min(config_interval - 1, elapsed)))
+        config_wakeup.clear()

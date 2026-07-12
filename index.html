@@ -773,9 +773,9 @@
                         <h3 class="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">🔄 面板轮询刷新设置</h3>
                         <p class="text-xs text-slate-500 mb-4 font-medium">控制前端自动刷新频率。数值越低越实时，但会消耗更多 CF Pages 请求额度（免费版每日约 10,000 次）。调整后点击下方按钮即时生效。</p>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                            <div><label class="block text-xs font-bold text-slate-500 mb-1">主数据刷新间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.dataInterval" min="1000" step="500" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                            <div><label class="block text-xs font-bold text-slate-500 mb-1">探针数据刷新间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.probeInterval" min="1000" step="500" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
-                            <div><label class="block text-xs font-bold text-slate-500 mb-1">Ping 心跳间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.pingInterval" min="1000" step="500" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                            <div><label class="block text-xs font-bold text-slate-500 mb-1">主数据刷新间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.dataInterval" min="15000" step="1000" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                            <div><label class="block text-xs font-bold text-slate-500 mb-1">探针数据刷新间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.probeInterval" min="30000" step="1000" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
+                            <div><label class="block text-xs font-bold text-slate-500 mb-1">UI 活跃信号间隔 (毫秒)</label><input type="number" v-model.number="pollingSettings.pingInterval" min="60000" step="5000" class="w-full bg-white/50 border p-2.5 rounded-xl text-sm font-medium text-slate-700"></div>
                         </div>
                         <button @click="applyPollingSettings" class="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-indigo-700 transition-all shadow-md">💾 立即生效配置</button>
                     </div>
@@ -977,7 +977,8 @@
                 const pingNodes = reactive({ ct: [], cu: [], cm: [] });
 
                 const probeSys = reactive({ theme: 'theme1', is_public: 'true', site_title: 'Server Monitor Pro', custom_bg: '', custom_css: '', custom_head: '', custom_script: '', report_interval: '5', visits_total: '0', visits_today: '0', ping_node_ct: 'default', ping_node_cu: 'default', ping_node_cm: 'default', enable_popup: 'false', popup_content: '', tg_notify: 'false', tg_bot_token: '', tg_chat_id: '' });
-                const pollingSettings = reactive(JSON.parse(localStorage.getItem('kui_polling_settings') || '{"dataInterval":5000,"probeInterval":10000,"pingInterval":30000}'));
+                const savedPolling = JSON.parse(localStorage.getItem('kui_polling_settings') || '{}');
+                const pollingSettings = reactive({ dataInterval: Math.max(15000, Number(savedPolling.dataInterval) || 15000), probeInterval: Math.max(30000, Number(savedPolling.probeInterval) || 30000), pingInterval: Math.max(60000, Number(savedPolling.pingInterval) || 60000) });
                 const publicProbeServers = ref([]);
                 const probeView = ref(localStorage.getItem('monitor_preferred_view') || 'card');
                 const probeDetailId = ref(null); const probeDetail = ref({});
@@ -1058,7 +1059,7 @@
                 watch(() => probeSys.custom_bg, updateCustomStyles);
                 watch(() => probeSys.custom_script, updateCustomScript);
 
-                const isOnline = (lastReport) => lastReport && (Date.now() - lastReport) < 60000;
+                const isOnline = (lastReport) => lastReport && (Date.now() - lastReport) < 240000;
                 const formatBytes = (bytes) => { const b = parseInt(bytes); if (isNaN(b) || b === 0) return '0 B'; const k = 1024, sizes = ['B', 'KB', 'MB', 'GB', 'TB'], i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]; };
                 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
                 const formatDate = (ts) => { if (!ts) return '永久'; const d = new Date(ts); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
@@ -1476,6 +1477,9 @@
                 const stopProbePolling = () => { if (probeTimer) { clearInterval(probeTimer); probeTimer = null; } };
                 const stopPolling = () => { if (dataTimer) { clearInterval(dataTimer); dataTimer = null; } if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } };
                 const applyPollingSettings = () => {
+                    pollingSettings.dataInterval = Math.max(15000, Number(pollingSettings.dataInterval) || 15000);
+                    pollingSettings.probeInterval = Math.max(30000, Number(pollingSettings.probeInterval) || 30000);
+                    pollingSettings.pingInterval = Math.max(60000, Number(pollingSettings.pingInterval) || 60000);
                     localStorage.setItem('kui_polling_settings', JSON.stringify(pollingSettings));
                     if (isLoggedIn.value) { stopPolling(); startPolling(); }
                     stopProbePolling(); startProbePolling();
@@ -1692,13 +1696,13 @@
 
                     let proxyBadges = '';
                     if (details.length === 0) {
-                        if (timeAgo < 8) {
+                        if (timeAgo < 120) {
                             proxyBadges = `
                             <div class="inline-flex items-center bg-slate-900 border border-sky-500/30 rounded-xl px-3 py-1.5 shadow-inner text-sky-400/90 text-sm">
                                 <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-sky-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                 通道握手初始化中...
                             </div>`;
-                        } else if (timeAgo < 30) {
+                        } else if (timeAgo < 360) {
                             proxyBadges = `
                             <div class="inline-flex items-center bg-slate-900 border border-slate-700/50 rounded-xl px-3 py-1.5 shadow-inner text-slate-400/80 text-xs">
                                 <svg class="animate-spin -ml-1 mr-2 h-3 w-3 text-slate-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -1816,7 +1820,7 @@
             pcFetchCountries();
             pcLoadConfig();
             pcFetchNodes();
-            pcInterval = setInterval(pcFetchNodes, 5000);
+            pcInterval = setInterval(pcFetchNodes, 15000);
         }
 
         function pcStopProxy() {

