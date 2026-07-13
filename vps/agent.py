@@ -251,7 +251,10 @@ def _singbox_service_healthy():
         return subprocess.run(["rc-service", "sing-box", "status"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15).returncode == 0
     return subprocess.run(["systemctl", "is-active", "--quiet", "sing-box"], timeout=15).returncode == 0
 
+_warp_exit_ip = ""
+
 def _verify_warp_exit(mode):
+    global _warp_exit_ip
     if mode == "off": return True
     checks = []
     if mode in {"ipv4", "dual"}: checks.append(("4", "http://1.1.1.1/cdn-cgi/trace"))
@@ -261,16 +264,25 @@ def _verify_warp_exit(mode):
         for _ in range(4):
             result = subprocess.run(["curl", "-fsSL", "--connect-timeout", "5", "--max-time", "12", "--proxy", "socks5://127.0.0.1:39482", url], capture_output=True, text=True)
             if result.returncode == 0 and "warp=on" in result.stdout.lower():
+                trace = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+                ip = trace.get("ip", "")
+                if ip: _warp_exit_ip = ip
                 verified = True; break
             time.sleep(2)
         if not verified: raise RuntimeError(f"WARP {family[1:]} data-plane verification failed")
     return True
 
+_residential_exit_ip = ""
+
 def _verify_residential_exit():
+    global _residential_exit_ip
     for _ in range(4):
         result = subprocess.run(["curl", "-fsSL", "--connect-timeout", "5", "--max-time", "15", "--proxy", "socks5://127.0.0.1:39482", "http://1.1.1.1/cdn-cgi/trace"], capture_output=True, text=True)
         trace = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        if result.returncode == 0 and trace.get("ip") and trace.get("ip") != VPS_IP and trace.get("warp", "off").lower() != "on": return True
+        ip = trace.get("ip", "")
+        if result.returncode == 0 and ip and ip != VPS_IP and trace.get("warp", "off").lower() != "on":
+            if ip: _residential_exit_ip = ip
+            return True
         time.sleep(2)
     raise RuntimeError("residential proxy data-plane verification failed")
 
@@ -1244,7 +1256,8 @@ def fetch_and_apply_configs():
                 if runtime_egress == "residential" and not residential.get("available"): raise RuntimeError("residential proxy is unavailable")
                 build_singbox_config(nodes, current_proxy_config, peers, mesh, runtime_socks, runtime_warp)
                 if apply_egress_change:
-                    result = {"success": True, "component": "egress", "revision": revision, "desired_mode": desired_egress, "applied_mode": desired_egress, "rolled_back": False, "rollback_healthy": True, "applied_at": int(time.time() * 1000)}
+                    egress_ip = _warp_exit_ip if runtime_egress.startswith("warp_") else (_residential_exit_ip if runtime_egress == "residential" else "")
+                    result = {"success": True, "component": "egress", "revision": revision, "desired_mode": desired_egress, "applied_mode": desired_egress, "rolled_back": False, "rollback_healthy": True, "applied_at": int(time.time() * 1000), "egress_ip": egress_ip}
                     _save_warp_state(desired_egress, revision, result)
                     try:
                         ack = _post_warp_result(result)

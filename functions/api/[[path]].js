@@ -421,6 +421,7 @@ async function initializeDbSchema(db) {
     await ensureWarpColumn('egress_applied_at', 'INTEGER NOT NULL DEFAULT 0');
     try { await db.prepare("SELECT proxy_mode FROM servers LIMIT 1").first(); } catch (e) { try { await db.prepare("ALTER TABLE servers ADD COLUMN proxy_mode TEXT DEFAULT 'global'").run(); } catch(err){} }
     try { await db.prepare("SELECT proxy_categories FROM servers LIMIT 1").first(); } catch (e) { try { await db.prepare("ALTER TABLE servers ADD COLUMN proxy_categories TEXT DEFAULT ''").run(); } catch(err){} }
+    try { await db.prepare("SELECT egress_ip FROM servers LIMIT 1").first(); } catch (e) { try { await db.prepare("ALTER TABLE servers ADD COLUMN egress_ip TEXT DEFAULT ''").run(); } catch(err){} }
     try { await db.prepare("SELECT last_report_id FROM probe_servers LIMIT 1").first(); } catch (e) { try { await db.prepare("ALTER TABLE probe_servers ADD COLUMN last_report_id TEXT DEFAULT ''").run(); } catch(err){} }
     try { await db.prepare("SELECT applied FROM report_receipts LIMIT 1").first(); } catch (e) { try { await db.prepare("ALTER TABLE report_receipts ADD COLUMN applied INTEGER DEFAULT 1").run(); } catch(err){} }
 
@@ -1066,8 +1067,8 @@ export async function onRequest(context) {
         let egress = { desired_mode: 'native', applied_mode: 'native', revision: 0, applied_revision: 0, status: 'applied', error: '', applied_at: 0 };
         let residential_outbound = { available: false };
         try {
-            const s = await db.prepare("SELECT egress_mode, egress_applied_mode, egress_revision, egress_applied_revision, egress_status, egress_error, egress_applied_at, proxy_mode, proxy_categories FROM servers WHERE ip = ?").bind(ip).first();
-            if (s) egress = { desired_mode: s.egress_mode || 'native', applied_mode: s.egress_applied_mode || 'native', revision: Number(s.egress_revision || 0), applied_revision: Number(s.egress_applied_revision || 0), status: s.egress_status || 'applied', error: s.egress_error || '', applied_at: Number(s.egress_applied_at || 0), proxy_mode: s.proxy_mode || 'global', proxy_categories: s.proxy_categories || '' };
+            const s = await db.prepare("SELECT egress_mode, egress_applied_mode, egress_revision, egress_applied_revision, egress_status, egress_error, egress_applied_at, proxy_mode, proxy_categories, egress_ip FROM servers WHERE ip = ?").bind(ip).first();
+            if (s) egress = { desired_mode: s.egress_mode || 'native', applied_mode: s.egress_applied_mode || 'native', revision: Number(s.egress_revision || 0), applied_revision: Number(s.egress_applied_revision || 0), status: s.egress_status || 'applied', error: s.egress_error || '', applied_at: Number(s.egress_applied_at || 0), proxy_mode: s.proxy_mode || 'global', proxy_categories: s.proxy_categories || '', egress_ip: s.egress_ip || '' };
             const slot = await db.prepare("SELECT value FROM probe_settings WHERE key = ?").bind(`proxy_slot_map_${ip}`).first();
             const globalSlot = slot || await db.prepare("SELECT value FROM probe_settings WHERE key = 'proxy_slot_map'").first();
             let port = 7920; try { port = parseInt(JSON.parse(slot?.value || '{}').port) || 7920; } catch (_) {}
@@ -1091,13 +1092,18 @@ export async function onRequest(context) {
         const success = body.success === true;
         const status = success ? 'applied' : 'failed';
         const error = success ? '' : String(body.error || 'Egress apply failed').slice(0, 500);
+        const egress_ip = body.egress_ip ? String(body.egress_ip).slice(0, 64) : '';
         let result;
         if (success) {
             try {
-                result = await db.prepare("UPDATE servers SET egress_applied_mode = ?, egress_applied_revision = ?, egress_status = 'applied', egress_error = '', egress_applied_at = ?, socks5_enable = CASE WHEN ? = 'residential' THEN 1 ELSE 0 END, warp_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, warp_applied_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, proxy_mode = CASE WHEN ? = 'residential' THEN proxy_mode ELSE 'global' END, proxy_categories = CASE WHEN ? = 'residential' THEN proxy_categories ELSE '' END WHERE ip = ? AND egress_revision = ? AND egress_mode = ?").bind(body.applied_mode, revision, Date.now(), body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, ip, revision, body.applied_mode).run();
+                result = await db.prepare("UPDATE servers SET egress_applied_mode = ?, egress_applied_revision = ?, egress_status = 'applied', egress_error = '', egress_applied_at = ?, socks5_enable = CASE WHEN ? = 'residential' THEN 1 ELSE 0 END, warp_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, warp_applied_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, proxy_mode = CASE WHEN ? = 'residential' THEN proxy_mode ELSE 'global' END, proxy_categories = CASE WHEN ? = 'residential' THEN proxy_categories ELSE '' END, egress_ip = ? WHERE ip = ? AND egress_revision = ? AND egress_mode = ?").bind(body.applied_mode, revision, Date.now(), body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, egress_ip, ip, revision, body.applied_mode).run();
             } catch (sqlErr) {
                 // Fallback: old schema without proxy_mode/proxy_categories
-                result = await db.prepare("UPDATE servers SET egress_applied_mode = ?, egress_applied_revision = ?, egress_status = 'applied', egress_error = '', egress_applied_at = ?, socks5_enable = CASE WHEN ? = 'residential' THEN 1 ELSE 0 END, warp_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, warp_applied_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END WHERE ip = ? AND egress_revision = ? AND egress_mode = ?").bind(body.applied_mode, revision, Date.now(), body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, ip, revision, body.applied_mode).run();
+                try {
+                    result = await db.prepare("UPDATE servers SET egress_applied_mode = ?, egress_applied_revision = ?, egress_status = 'applied', egress_error = '', egress_applied_at = ?, socks5_enable = CASE WHEN ? = 'residential' THEN 1 ELSE 0 END, warp_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, warp_applied_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, egress_ip = ? WHERE ip = ? AND egress_revision = ? AND egress_mode = ?").bind(body.applied_mode, revision, Date.now(), body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, egress_ip, ip, revision, body.applied_mode).run();
+                } catch (sqlErr2) {
+                    result = await db.prepare("UPDATE servers SET egress_applied_mode = ?, egress_applied_revision = ?, egress_status = 'applied', egress_error = '', egress_applied_at = ?, socks5_enable = CASE WHEN ? = 'residential' THEN 1 ELSE 0 END, warp_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END, warp_applied_mode = CASE WHEN ? LIKE 'warp_%' THEN substr(?, 6) ELSE 'off' END WHERE ip = ? AND egress_revision = ? AND egress_mode = ?").bind(body.applied_mode, revision, Date.now(), body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, body.applied_mode, ip, revision, body.applied_mode).run();
+                }
             }
         } else {
             result = await db.prepare("UPDATE servers SET egress_status = 'failed', egress_error = ?, egress_applied_at = ? WHERE ip = ? AND egress_revision = ? AND egress_applied_mode = ?").bind(error, Date.now(), ip, revision, body.applied_mode).run();

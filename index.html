@@ -474,7 +474,7 @@
                                 <div v-if="egressModeOf(vps) !== 'residential'" class="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-black text-amber-700">⚠ 住宅 IP 出口与 WARP 出口不能同时启用；住宅出口自动使用本机 ACTIVE 隧道，无需填写地址或密码。</div>
                                 <div class="mt-3 text-[10px] font-bold" :class="vps.egress_status === 'pending' ? 'text-amber-500' : (vps.egress_status === 'failed' ? 'text-rose-500' : 'text-slate-500')">
                                     <span v-if="vps.egress_status === 'pending'">● 期望 {{ egressModeLabel(vps.egress_mode) }}，正在实时下发...</span>
-                                    <span v-else-if="vps.egress_status === 'applied'">● 实际已应用 {{ egressModeLabel(vps.egress_applied_mode) }}</span>
+                                    <span v-else-if="vps.egress_status === 'applied'">● 实际已应用 {{ egressModeLabel(vps.egress_applied_mode) }}<span v-if="vps.egress_ip" class="ml-1 font-mono text-indigo-500">({{ vps.egress_ip }})</span></span>
                                     <span v-else-if="vps.egress_status === 'failed'">● 应用失败；实际保持 {{ egressModeLabel(vps.egress_applied_mode) }}：{{ vps.egress_error || '未知错误' }}</span>
                                 </div>
                             </div>
@@ -1518,7 +1518,7 @@
                     if (!snapshot?.ip) return;
                     const key = normalizeRealtimeKey(snapshot.ip);
                     const resultServer = servers.value.find(item => normalizeRealtimeKey(item.ip) === key);
-                    if (resultServer && snapshot.core_config_result?.component === 'egress' && Number(snapshot.core_config_result.revision) === Number(resultServer.egress_revision)) { resultServer.egress_status = snapshot.core_config_result.success ? 'applied' : 'failed'; resultServer.egress_applied_mode = snapshot.core_config_result.applied_mode; resultServer.egress_error = snapshot.core_config_result.error || ''; if (snapshot.core_config_result.success) resultServer.egress_applied_revision = snapshot.core_config_result.revision; if (resultServer.egress_status === 'applied' && egressModeOf(resultServer) === 'residential' && resultServer._proxy_categories_dirty) { resultServer._proxy_categories_dirty = false; updateVpsEgress(resultServer, 'residential', proxyModeOf(resultServer), proxyCategoriesOf(resultServer)); } }
+                    if (resultServer && snapshot.core_config_result?.component === 'egress' && Number(snapshot.core_config_result.revision) === Number(resultServer.egress_revision)) { resultServer.egress_status = snapshot.core_config_result.success ? 'applied' : 'failed'; resultServer.egress_applied_mode = snapshot.core_config_result.applied_mode; resultServer.egress_error = snapshot.core_config_result.error || ''; if (snapshot.core_config_result.success) resultServer.egress_applied_revision = snapshot.core_config_result.revision; if (snapshot.core_config_result.egress_ip) resultServer.egress_ip = snapshot.core_config_result.egress_ip; if (resultServer.egress_status === 'applied' && egressModeOf(resultServer) === 'residential' && resultServer._proxy_categories_dirty) { resultServer._proxy_categories_dirty = false; updateVpsEgress(resultServer, 'residential', proxyModeOf(resultServer), proxyCategoriesOf(resultServer)); } }
                     if (snapshot.core) {
                         const timestamp = Number(snapshot.core_last_seen || snapshot.updated_at || 0);
                         const server = servers.value.find(item => normalizeRealtimeKey(item.ip) === key);
